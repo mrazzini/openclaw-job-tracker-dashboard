@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, Session
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
@@ -124,17 +124,12 @@ def root():
     return {"message": "Ambros Job Tracker API", "status": "running"}
 
 @app.get("/api/stats", response_model=DashboardStats)
-def get_stats(db: Session = None):
-    if db is None:
-        db = SessionLocal()
-    try:
-        found = db.query(Job).filter(Job.status == "found").count()
-        applied = db.query(Job).filter(Job.status == "applied").count()
-        interview = db.query(Job).filter(Job.status == "interview").count()
-        rejected = db.query(Job).filter(Job.status == "rejected").count()
-        return DashboardStats(found=found, applied=applied, interview=interview, rejected=rejected)
-    finally:
-        db.close()
+def get_stats(db: Session = Depends(get_db)):
+    found = db.query(Job).filter(Job.status == "found").count()
+    applied = db.query(Job).filter(Job.status == "applied").count()
+    interview = db.query(Job).filter(Job.status == "interview").count()
+    rejected = db.query(Job).filter(Job.status == "rejected").count()
+    return DashboardStats(found=found, applied=applied, interview=interview, rejected=rejected)
 
 # Skills
 @app.get("/api/skills", response_model=List[SkillResponse])
