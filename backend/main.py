@@ -144,6 +144,16 @@ def create_skill(skill: SkillCreate, db=Depends(get_db)):
     db.refresh(db_skill)
     return db_skill
 
+@app.post("/api/skills/bulk")
+def create_skills_bulk(skills: List[SkillCreate], db=Depends(get_db)):
+    created = []
+    for skill_data in skills:
+        db_skill = Skill(**skill_data.model_dump())
+        db.add(db_skill)
+        created.append(db_skill)
+    db.commit()
+    return {"count": len(created), "message": f"Created {len(created)} skills"}
+
 @app.delete("/api/skills/{skill_id}")
 def delete_skill(skill_id: int, db=Depends(get_db)):
     skill = db.query(Skill).filter(Skill.id == skill_id).first()
@@ -168,6 +178,16 @@ def create_job(job: JobCreate, db=Depends(get_db)):
     db.commit()
     db.refresh(db_job)
     return db_job
+
+@app.post("/api/jobs/bulk")
+def create_jobs_bulk(jobs: List[JobCreate], db=Depends(get_db)):
+    created = []
+    for job_data in jobs:
+        db_job = Job(**job_data.model_dump())
+        db.add(db_job)
+        created.append(db_job)
+    db.commit()
+    return {"count": len(created), "message": f"Created {len(created)} jobs"}
 
 @app.patch("/api/jobs/{job_id}", response_model=JobResponse)
 def update_job(job_id: int, update: JobUpdate, db=Depends(get_db)):
