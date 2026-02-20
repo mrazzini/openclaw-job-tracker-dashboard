@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react'
 
 export default function Skills({ apiUrl }) {
   const [skills, setSkills] = useState([])
+  const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [newSkill, setNewSkill] = useState({ name: '', level: 'Strong', category: 'Languages' })
 
@@ -11,12 +12,16 @@ export default function Skills({ apiUrl }) {
   }, [])
 
   const fetchSkills = async () => {
+    setLoading(true)
     try {
       const res = await fetch(`${apiUrl}/api/skills`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setSkills(data)
     } catch (e) {
       console.error('Failed to fetch skills:', e)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -129,8 +134,11 @@ export default function Skills({ apiUrl }) {
         )
       ))}
 
-      {skills.length === 0 && (
-        <p className="text-center text-gray-500 py-8">No skills added yet</p>
+      {loading && (
+        <p className="text-center text-gray-500 py-8">Loading skills...</p>
+      )}
+      {!loading && skills.length === 0 && (
+        <p className="text-center text-gray-500 py-8">No skills found. API: {apiUrl}</p>
       )}
     </div>
   )
