@@ -3,6 +3,7 @@ import { ExternalLink, Check, X, Plus } from 'lucide-react'
 
 export default function Jobs({ apiUrl }) {
   const [jobs, setJobs] = useState([])
+  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('All')
   const [showAdd, setShowAdd] = useState(false)
   const [newJob, setNewJob] = useState({ title: '', company: '', url: '', score: 60, requirements: '' })
@@ -12,12 +13,17 @@ export default function Jobs({ apiUrl }) {
   }, [filter])
 
   const fetchJobs = async () => {
+    setLoading(true)
     try {
-      const res = await fetch(`${apiUrl}/api/jobs?status=${filter}`)
+      const url = filter === 'All' ? `${apiUrl}/api/jobs` : `${apiUrl}/api/jobs?status=${filter}`
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setJobs(data)
     } catch (e) {
       console.error('Failed to fetch jobs:', e)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -170,8 +176,11 @@ export default function Jobs({ apiUrl }) {
           </div>
         ))}
         
-        {jobs.length === 0 && (
-          <p className="text-center text-gray-500 py-8">No jobs found</p>
+        {loading && (
+          <p className="text-center text-gray-500 py-8">Loading jobs...</p>
+        )}
+        {!loading && jobs.length === 0 && (
+          <p className="text-center text-gray-500 py-8">No jobs found for filter: {filter}</p>
         )}
       </div>
     </div>
