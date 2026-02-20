@@ -64,20 +64,20 @@ export default function Dashboard({ stats, onRefresh }) {
         ) : (
           <div className="space-y-3">
             {recentJobs.map(job => (
-              <div key={job.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <div key={job.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-gray-50 rounded-lg gap-2">
                 <div className="flex items-center gap-3">
                   <span className="text-xl">{statusEmoji[job.status] || '📋'}</span>
-                  <div>
-                    <p className="font-medium">{job.title}</p>
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{job.title}</p>
                     <p className="text-sm text-gray-500">{job.company}</p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="flex items-center gap-2 sm:text-right">
                   <span className="inline-block px-2 py-1 bg-blue-100 text-blue-700 rounded text-sm font-medium">
                     Score: {job.score}
                   </span>
                   {job.has_early_applicant && (
-                    <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
                       Early
                     </span>
                   )}
