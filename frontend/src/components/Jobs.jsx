@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ExternalLink, Check, X, Plus } from 'lucide-react'
+import { ExternalLink, Check, X, Plus, FileText, Download, Loader2 } from 'lucide-react'
 
 export default function Jobs({ apiUrl }) {
   const [jobs, setJobs] = useState([])
@@ -40,6 +40,9 @@ export default function Jobs({ apiUrl }) {
     }
   }
 
+  const [generating, setGenerating] = useState(null)
+  const [generatedCV, setGeneratedCV] = useState(null)
+
   const addJob = async () => {
     try {
       await fetch(`${apiUrl}/api/jobs`, {
@@ -53,6 +56,30 @@ export default function Jobs({ apiUrl }) {
     } catch (e) {
       console.error('Failed to add job:', e)
     }
+  }
+
+  const generateCV = async (jobId) => {
+    setGenerating(jobId)
+    setGeneratedCV(null)
+    try {
+      const res = await fetch(`${apiUrl}/api/cv/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId })
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setGeneratedCV(data)
+    } catch (e) {
+      console.error('Failed to generate CV:', e)
+      alert('Failed to generate CV. Check console for details.')
+    } finally {
+      setGenerating(null)
+    }
+  }
+
+  const downloadPDF = (resumeId) => {
+    window.open(`${apiUrl}/api/cv/${resumeId}/pdf`, '_blank')
   }
 
   const statusOptions = ['found', 'applied', 'interview', 'rejected', 'offer']
@@ -151,12 +178,24 @@ export default function Jobs({ apiUrl }) {
               <p className="text-sm text-gray-600 mb-3">{job.requirements}</p>
             )}
             
-            <div className="flex items-center justify-between">
-              <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-2">
                 <a href={job.url} target="_blank" rel="noopener noreferrer" 
                    className="btn btn-secondary flex items-center gap-1 text-sm">
                   <ExternalLink size={14} /> View
                 </a>
+                
+                <button
+                  onClick={() => generateCV(job.id)}
+                  disabled={generating === job.id}
+                  className="btn btn-primary flex items-center gap-1 text-sm"
+                >
+                  {generating === job.id ? (
+                    <><Loader2 size={14} className="animate-spin" /> Generating...</>
+                  ) : (
+                    <><FileText size={14} /> Generate CV</>
+                  )}
+                </button>
                 
                 <select
                   value={job.status}
@@ -173,6 +212,19 @@ export default function Jobs({ apiUrl }) {
                 Found: {new Date(job.found_at).toLocaleDateString()}
               </p>
             </div>
+            
+            {/* Generated CV result */}
+            {generatedCV && generatedCV.resume_id && job.id === (generatedCV.job_id || req?.job_id) && (
+              <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200">
+                <p className="text-sm font-medium text-green-800">✅ CV Generated: {generatedCV.name}</p>
+                <button
+                  onClick={() => downloadPDF(generatedCV.resume_id)}
+                  className="mt-2 btn btn-primary flex items-center gap-1 text-sm"
+                >
+                  <Download size={14} /> Download PDF
+                </button>
+              </div>
+            )}
           </div>
         ))}
         

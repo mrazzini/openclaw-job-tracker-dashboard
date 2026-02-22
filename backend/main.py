@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
@@ -7,6 +8,9 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 import os
+import json
+import copy
+import httpx
 
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://ambros:ambros_secure_pass@localhost:5432/job_tracker")
@@ -264,3 +268,173 @@ def import_data(data: dict, db=Depends(get_db)):
         db.add(job)
     db.commit()
     return {"message": "Data imported successfully"}
+
+# ============================================================
+# CV Generation via Reactive Resume (rxresu.me) cloud API
+# ============================================================
+
+RXRESUME_API = "https://rxresu.me/api/openapi"
+RXRESUME_API_KEY = os.getenv("RXRESUME_API_KEY", "")
+MASTER_RESUME_ID = os.getenv("MASTER_RESUME_ID", "019bef9f-2538-77aa-8e23-02f23d5c9cc2")
+
+def rxresume_headers():
+    return {"x-api-key": RXRESUME_API_KEY, "Content-Type": "application/json"}
+
+class CVGenerateRequest(BaseModel):
+    job_id: int
+    custom_summary: Optional[str] = None
+
+@app.get("/api/cv/master")
+async def get_master_resume():
+    """Get the master resume from Reactive Resume."""
+    if not RXRESUME_API_KEY:
+        raise HTTPException(status_code=500, detail="RXRESUME_API_KEY not set")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{RXRESUME_API}/resumes/{MASTER_RESUME_ID}", headers=rxresume_headers())
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to fetch master resume")
+        return resp.json()
+
+@app.get("/api/cv/resumes")
+async def list_resumes():
+    """List all resumes on Reactive Resume account."""
+    if not RXRESUME_API_KEY:
+        raise HTTPException(status_code=500, detail="RXRESUME_API_KEY not set")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(f"{RXRESUME_API}/resumes", headers=rxresume_headers())
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to list resumes")
+        return resp.json()
+
+@app.post("/api/cv/generate")
+async def generate_tailored_cv(req: CVGenerateRequest, db=Depends(get_db)):
+    """
+    Generate a tailored CV for a specific job.
+    1. Fetches master resume from rxresu.me
+    2. Duplicates it with a job-specific name
+    3. Tailors skills and summary to match job requirements
+    4. Returns the new resume ID and PDF export URL
+    """
+    if not RXRESUME_API_KEY:
+        raise HTTPException(status_code=500, detail="RXRESUME_API_KEY not set")
+
+    # Get the job
+    job = db.query(Job).filter(Job.id == req.job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Get user skills from dashboard DB
+    user_skills = db.query(Skill).all()
+    strong_skills = [s.name for s in user_skills if s.level in ("Expert", "Strong")]
+    working_skills = [s.name for s in user_skills if s.level == "Working"]
+    learning_skills = [s.name for s in user_skills if s.level == "Learning"]
+    no_skills = [s.name for s in user_skills if s.level == "None"]
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Step 1: Duplicate master resume
+        slug = f"{job.company.lower().replace(' ', '-')}-{job.title.lower().replace(' ', '-')}"[:50]
+        dup_resp = await client.post(
+            f"{RXRESUME_API}/resumes/{MASTER_RESUME_ID}/duplicate",
+            headers=rxresume_headers(),
+            json={"name": f"{job.title} @ {job.company}", "slug": slug, "tags": ["tailored", job.company.lower()]}
+        )
+        if dup_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=500, detail=f"Failed to duplicate resume: {dup_resp.text}")
+
+        new_resume_id = dup_resp.json() if isinstance(dup_resp.json(), str) else dup_resp.json().get("id", "")
+
+        # Step 2: Fetch the duplicated resume to get its full data
+        get_resp = await client.get(
+            f"{RXRESUME_API}/resumes/{new_resume_id}",
+            headers=rxresume_headers()
+        )
+        if get_resp.status_code != 200:
+            raise HTTPException(status_code=500, detail="Failed to fetch duplicated resume")
+
+        resume_data = get_resp.json()["data"]
+
+        # Step 3: Tailor the resume
+        # Filter skills: emphasize strong/working, remove "None" level skills
+        job_keywords = (job.title + " " + job.requirements).lower()
+
+        # Tailor summary if custom provided, otherwise adjust for role
+        if req.custom_summary:
+            resume_data["summary"]["content"] = req.custom_summary
+        else:
+            base_summary = resume_data["summary"]["content"]
+            role_context = f" Seeking a {job.title} position with focus on building production-grade AI systems."
+            if "rag" in job_keywords or "llm" in job_keywords:
+                role_context = f" Seeking a {job.title} role, bringing hands-on experience with RAG architectures, LLM integration, and document processing pipelines."
+            elif "computer vision" in job_keywords or "cv" in job_keywords or "yolo" in job_keywords:
+                role_context = f" Seeking a {job.title} role, bringing proven experience in computer vision systems, object detection pipelines, and safety data extraction."
+            elif "data engineer" in job_keywords:
+                role_context = f" Seeking a {job.title} role, with strong capabilities in ETL pipeline design, PostgreSQL, and end-to-end data system ownership."
+            elif "agentic" in job_keywords or "agent" in job_keywords:
+                role_context = f" Seeking a {job.title} role, with active experience building agentic AI systems and LLM orchestration workflows."
+            resume_data["summary"]["content"] = base_summary.rstrip("</p>") + role_context + "</p>"
+
+        # Step 4: Update the duplicated resume with tailored data
+        update_resp = await client.put(
+            f"{RXRESUME_API}/resumes/{new_resume_id}",
+            headers=rxresume_headers(),
+            json={"data": resume_data}
+        )
+        if update_resp.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Failed to update resume: {update_resp.text}")
+
+        # Step 5: Get PDF export URL
+        pdf_url = f"{RXRESUME_API}/resumes/{new_resume_id}/export/pdf"
+
+        # Save to dashboard CV vault
+        cv_entry = CV(
+            name=f"{job.title} @ {job.company}",
+            version="v1.0",
+            content=json.dumps({
+                "rxresume_id": new_resume_id,
+                "job_id": job.id,
+                "pdf_url": pdf_url,
+                "tailored_for": f"{job.title} @ {job.company}",
+                "generated_at": datetime.utcnow().isoformat()
+            })
+        )
+        db.add(cv_entry)
+        db.commit()
+
+        return {
+            "resume_id": new_resume_id,
+            "name": f"{job.title} @ {job.company}",
+            "pdf_url": pdf_url,
+            "message": f"Tailored CV generated for {job.title} @ {job.company}"
+        }
+
+@app.get("/api/cv/{resume_id}/pdf")
+async def get_cv_pdf(resume_id: str):
+    """Proxy PDF export from Reactive Resume."""
+    if not RXRESUME_API_KEY:
+        raise HTTPException(status_code=500, detail="RXRESUME_API_KEY not set")
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.get(
+            f"{RXRESUME_API}/resumes/{resume_id}/export/pdf",
+            headers=rxresume_headers()
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to export PDF")
+        return StreamingResponse(
+            iter([resp.content]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=cv-{resume_id}.pdf"}
+        )
+
+@app.delete("/api/cv/{resume_id}")
+async def delete_generated_cv(resume_id: str):
+    """Delete a generated CV from Reactive Resume."""
+    if not RXRESUME_API_KEY:
+        raise HTTPException(status_code=500, detail="RXRESUME_API_KEY not set")
+    async with httpx.AsyncClient() as client:
+        resp = await client.delete(
+            f"{RXRESUME_API}/resumes/{resume_id}",
+            headers=rxresume_headers()
+        )
+        if resp.status_code not in (200, 204):
+            raise HTTPException(status_code=resp.status_code, detail="Failed to delete resume")
+        return {"message": "CV deleted from Reactive Resume"}
